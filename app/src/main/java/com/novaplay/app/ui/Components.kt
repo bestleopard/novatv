@@ -304,7 +304,7 @@ fun WithContent(
         r.isFailure -> Centered("Impossible de charger la playlist :\n${r.exceptionOrNull()?.message ?: "erreur inconnue"}") {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(onClick = { retry++ }) { Text("Réessayer") }
-                if (onDownloads != null) OutlinedButton(onClick = onDownloads) { Text("Mes téléchargements") }
+                if (onDownloads != null) OutlinedButton(onClick = onDownloads) { Text("Offline") }
                 if (onPlaylists != null) OutlinedButton(onClick = onPlaylists) { Text("Playlists") }
             }
         }
