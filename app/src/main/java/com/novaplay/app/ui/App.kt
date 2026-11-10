@@ -22,7 +22,7 @@ fun App() {
         composable("playlists") {
             PlaylistsScreen(
                 onOpen = { p -> Store.activeId = p.id; nav.resetTo("home") },
-                onDownloads = { nav.navigate("downloads") },
+                onDownloads = { nav.navigate("offline") },
             )
         }
         composable("home") {
@@ -30,7 +30,7 @@ fun App() {
                 onLive = { nav.navigate("live") },
                 onMovies = { nav.navigate("movies") },
                 onSeries = { nav.navigate("series") },
-                onDownloads = { nav.navigate("downloads") },
+                onDownloads = { nav.navigate("offline") },
                 onPlaylists = { nav.resetTo("playlists") },
             )
         }
@@ -47,6 +47,11 @@ fun App() {
         composable("series/{id}") { e ->
             SeriesDetailScreen(e.arguments?.getString("id").orEmpty(), onBack = { nav.popBackStack() })
         }
-        composable("downloads") { DownloadsScreen(onBack = { nav.popBackStack() }) }
+        composable("offline") {
+            OfflineScreen(onBack = { nav.popBackStack() }, onOpenSeries = { key -> nav.navigate("offline/series/${Uri.encode(key)}") })
+        }
+        composable("offline/series/{key}") { e ->
+            OfflineSeriesScreen(e.arguments?.getString("key").orEmpty(), onBack = { nav.popBackStack() })
+        }
     }
 }
