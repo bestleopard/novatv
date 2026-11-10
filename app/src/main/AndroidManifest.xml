@@ -43,13 +43,8 @@
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
 
         <service
-            android:name=".download.NovaDownloadService"
+            android:name=".download.OfflineDownloadService"
             android:exported="false"
-            android:foregroundServiceType="dataSync">
-            <intent-filter>
-                <action android:name="androidx.media3.exoplayer.downloadService.action.RESTART" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-        </service>
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>
