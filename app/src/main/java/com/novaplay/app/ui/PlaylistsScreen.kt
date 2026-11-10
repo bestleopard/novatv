@@ -15,7 +15,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
@@ -55,7 +55,7 @@ fun PlaylistsScreen(onOpen: (Playlist) -> Unit, onDownloads: () -> Unit) {
         title = if (adding) "Ajouter une playlist" else "Mes playlists",
         onBack = if (adding && playlists.isNotEmpty()) ({ adding = false }) else null,
         actions = {
-            IconButton(onClick = onDownloads) { Icon(Icons.Default.Download, "Téléchargements") }
+            IconButton(onClick = onDownloads) { Icon(Icons.Default.DownloadDone, "Offline") }
             if (!adding) IconButton(onClick = { adding = true }) { Icon(Icons.Default.Add, "Ajouter") }
         },
     ) {
