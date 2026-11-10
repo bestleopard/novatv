@@ -18,7 +18,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Refresh
@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +51,9 @@ import androidx.compose.ui.unit.dp
 import com.novaplay.app.data.Category
 import com.novaplay.app.data.Repository
 import com.novaplay.app.data.Store
+import com.novaplay.app.download.Offline
+import com.novaplay.app.download.OfflineKind
+import com.novaplay.app.download.OfflineState
 import com.novaplay.app.player.PlayerActivity
 
 private data class Tile(val title: String, val subtitle: String, val icon: ImageVector, val onClick: () -> Unit)
@@ -73,11 +77,16 @@ fun HomeScreen(
         },
     ) {
         WithContent(reloadKey = reload, onDownloads = onDownloads, onPlaylists = onPlaylists) { c ->
+            val offline by Offline.items.collectAsState()
+            val offMovies = offline.count { it.state == OfflineState.COMPLETED && it.kind == OfflineKind.MOVIE }
+            val offSeries = offline.filter { it.state == OfflineState.COMPLETED && it.kind == OfflineKind.EPISODE }
+                .map { it.seriesId ?: it.seriesName }.distinct().size
+            val offActive = offline.count { it.state == OfflineState.DOWNLOADING || it.state == OfflineState.QUEUED }
             val tiles = listOf(
                 Tile("TV en direct", "${c.channels.size} chaînes", Icons.Default.LiveTv, onLive),
                 Tile("Films", "${c.movies.size} films", Icons.Default.Movie, onMovies),
                 Tile("Séries", "${c.series.size} séries", Icons.Default.VideoLibrary, onSeries),
-                Tile("Téléchargements", "Regarder hors ligne", Icons.Default.Download, onDownloads),
+                Tile("Offline", "$offMovies films · $offSeries séries" + if (offActive > 0) " · $offActive en cours" else "", Icons.Default.DownloadDone, onDownloads),
             )
             val first = remember { FocusRequester() }
             LazyVerticalGrid(
