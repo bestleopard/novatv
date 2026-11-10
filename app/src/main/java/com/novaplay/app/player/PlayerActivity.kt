@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.net.Uri
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.WindowManager
@@ -16,11 +17,13 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import com.novaplay.app.data.Store
 import com.novaplay.app.download.DownloadUtil
+import java.io.File
 
 class PlayerActivity : Activity() {
 
@@ -29,7 +32,7 @@ class PlayerActivity : Activity() {
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_LIVE = "live"
         private const val EXTRA_RESUME = "resume"
-        private const val EXTRA_DOWNLOAD = "download"
+        private const val EXTRA_FILE = "file"
         private const val EXTRA_FROM_START = "fromStart"
 
         fun start(
@@ -38,7 +41,7 @@ class PlayerActivity : Activity() {
             title: String,
             live: Boolean,
             resumeKey: String? = null,
-            downloadId: String? = null,
+            localFile: String? = null,
             fromStart: Boolean = false,
         ) {
             ctx.startActivity(
@@ -47,7 +50,7 @@ class PlayerActivity : Activity() {
                     .putExtra(EXTRA_TITLE, title)
                     .putExtra(EXTRA_LIVE, live)
                     .putExtra(EXTRA_RESUME, resumeKey)
-                    .putExtra(EXTRA_DOWNLOAD, downloadId)
+                    .putExtra(EXTRA_FILE, localFile)
                     .putExtra(EXTRA_FROM_START, fromStart)
             )
         }
@@ -92,22 +95,19 @@ class PlayerActivity : Activity() {
         val url = intent.getStringExtra(EXTRA_URL) ?: run { finish(); return }
         val title = intent.getStringExtra(EXTRA_TITLE).orEmpty()
         val live = intent.getBooleanExtra(EXTRA_LIVE, false)
-        val downloadId = intent.getStringExtra(EXTRA_DOWNLOAD)
+        val localFile = intent.getStringExtra(EXTRA_FILE)?.let { File(it) }?.takeIf { it.exists() }
         val resumeKey = intent.getStringExtra(EXTRA_RESUME)
 
-        // Live : réseau direct. VOD : fichier téléchargé si présent, sinon réseau.
-        val dataSourceFactory = if (live) DownloadUtil.httpFactory() else DownloadUtil.playbackFactory(this)
+        // Gère à la fois le réseau (http/https) et les fichiers locaux (offline).
+        val dataSourceFactory = DefaultDataSource.Factory(this, DownloadUtil.httpFactory())
 
         val p = ExoPlayer.Builder(this)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
             .build()
 
-        val downloaded = downloadId?.let {
-            runCatching { DownloadUtil.manager(this).downloadIndex.getDownload(it) }.getOrNull()
-        }
-        val item = downloaded?.request?.toMediaItem() ?: MediaItem.Builder()
-            .setUri(url)
-            .setMimeType(if (url.contains(".m3u8", ignoreCase = true)) MimeTypes.APPLICATION_M3U8 else null)
+        val item = MediaItem.Builder()
+            .setUri(if (localFile != null) Uri.fromFile(localFile) else Uri.parse(url))
+            .setMimeType(if (localFile == null && url.contains(".m3u8", ignoreCase = true)) MimeTypes.APPLICATION_M3U8 else null)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
             .build()
 
