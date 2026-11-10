@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DownloadDone
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material3.Button
@@ -26,11 +27,13 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,33 +47,39 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.media3.exoplayer.offline.Download
 import coil.compose.AsyncImage
 import com.novaplay.app.data.Category
 import com.novaplay.app.data.Episode
 import com.novaplay.app.data.Repository
 import com.novaplay.app.data.Store
 import com.novaplay.app.download.DownloadUtil
+import com.novaplay.app.download.Offline
+import com.novaplay.app.download.OfflineItem
+import com.novaplay.app.download.OfflineKind
+import com.novaplay.app.download.OfflineState
 import com.novaplay.app.player.PlayerActivity
-import kotlinx.coroutines.delay
 
 private const val ALL_VOD = "__all"
 
 fun movieKey(movieId: String) = "mv_${Repository.playlist?.id}_$movieId"
 fun episodeKey(episodeId: String) = "ep_${Repository.playlist?.id}_$episodeId"
 
-/** Suit l'état d'un téléchargement (rafraîchi chaque seconde). */
+/** État hors ligne d'un film / épisode (mis à jour en direct). */
 @Composable
-fun rememberDownload(id: String): Download? {
-    val ctx = LocalContext.current
-    var d by remember(id) { mutableStateOf<Download?>(null) }
-    LaunchedEffect(id) {
-        while (true) {
-            d = runCatching { DownloadUtil.find(ctx, id) }.getOrNull()
-            delay(1000)
-        }
+fun rememberOffline(id: String): OfflineItem? {
+    val all by Offline.items.collectAsState()
+    return all.firstOrNull { it.id == id }
+}
+
+fun offlineLabel(o: OfflineItem): String = when (o.state) {
+    OfflineState.QUEUED -> "En attente"
+    OfflineState.DOWNLOADING -> buildString {
+        append(if (o.percent >= 0) "${o.percent} %" else DownloadUtil.formatBytes(o.downloadedBytes))
+        if (o.speedBps > 0) append(" · ").append(DownloadUtil.formatSpeed(o.speedBps))
     }
-    return d
+    OfflineState.PAUSED -> "En pause"
+    OfflineState.COMPLETED -> "Disponible offline"
+    OfflineState.FAILED -> "Échec"
 }
 
 @Composable
@@ -109,8 +118,9 @@ fun MovieDetailScreen(movieId: String, onBack: () -> Unit) {
             if (m == null) { Centered("Film introuvable"); return@WithContent }
             val ctx = LocalContext.current
             val key = movieKey(m.id)
-            val d = rememberDownload(key)
-            val done = d?.state == Download.STATE_COMPLETED
+            val o = rememberOffline(key)
+            val done = o?.state == OfflineState.COMPLETED
+            val localPath = if (done) Offline.file(o!!).path else null
             val resumePos = remember { Store.position(key) }
 
             Row(Modifier.fillMaxSize().padding(20.dp)) {
@@ -124,15 +134,23 @@ fun MovieDetailScreen(movieId: String, onBack: () -> Unit) {
                     m.rating?.let { Text("Note : $it", style = MaterialTheme.typography.bodyMedium) }
                     if (resumePos > 0) Text("Reprise à ${formatTime(resumePos)}", color = Accent)
                     Button(onClick = {
-                        PlayerActivity.start(ctx, m.url, m.name, live = false, resumeKey = key, downloadId = if (done) key else null)
+                        PlayerActivity.start(ctx, m.url, m.name, live = false, resumeKey = key, localFile = localPath)
                     }) {
                         Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(6.dp))
                         Text(if (done) "Lire (hors ligne)" else if (resumePos > 0) "Reprendre" else "Lire")
                     }
                     if (resumePos > 0) OutlinedButton(onClick = {
-                        PlayerActivity.start(ctx, m.url, m.name, live = false, resumeKey = key, downloadId = if (done) key else null, fromStart = true)
+                        PlayerActivity.start(ctx, m.url, m.name, live = false, resumeKey = key, localFile = localPath, fromStart = true)
                     }) { Icon(Icons.Default.Replay, null); Spacer(Modifier.width(6.dp)); Text("Depuis le début") }
-                    DownloadButton(d, onStart = { DownloadUtil.start(ctx, key, m.url, m.name, m.poster) }, onDelete = { DownloadUtil.remove(ctx, key) })
+                    DownloadButton(o, onStart = {
+                        Offline.enqueue(
+                            ctx,
+                            OfflineItem(
+                                id = key, kind = OfflineKind.MOVIE, title = m.name, url = m.url, poster = m.poster,
+                                fileName = "$key.${Offline.extensionOf(m.url)}",
+                            ),
+                        )
+                    })
                 }
             }
         }
@@ -140,25 +158,42 @@ fun MovieDetailScreen(movieId: String, onBack: () -> Unit) {
 }
 
 @Composable
-fun DownloadButton(d: Download?, onStart: () -> Unit, onDelete: () -> Unit) {
-    if (d == null) {
+fun DownloadButton(o: OfflineItem?, onStart: () -> Unit) {
+    val ctx = LocalContext.current
+    if (o == null) {
         OutlinedButton(onClick = onStart) {
             Icon(Icons.Default.Download, null); Spacer(Modifier.width(6.dp)); Text("Télécharger")
         }
         return
     }
-    when (d.state) {
-        Download.STATE_REMOVING -> OutlinedButton(onClick = onStart) {
-            Icon(Icons.Default.Download, null); Spacer(Modifier.width(6.dp)); Text("Télécharger")
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        when (o.state) {
+            OfflineState.COMPLETED -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("✓ Disponible offline · ${DownloadUtil.formatBytes(o.downloadedBytes)}", color = Accent)
+            }
+            OfflineState.DOWNLOADING, OfflineState.QUEUED -> {
+                Text(offlineLabel(o) + if (o.totalBytes > 0) " · ${DownloadUtil.formatBytes(o.downloadedBytes)} / ${DownloadUtil.formatBytes(o.totalBytes)}" else "", color = Accent)
+                if (o.percent >= 0) LinearProgressIndicator(progress = { o.percent / 100f }, modifier = Modifier.width(260.dp))
+                else LinearProgressIndicator(modifier = Modifier.width(260.dp))
+            }
+            OfflineState.PAUSED -> Text("En pause · ${DownloadUtil.formatBytes(o.downloadedBytes)}", color = Accent)
+            OfflineState.FAILED -> Text("Échec : ${o.error ?: "erreur inconnue"}", color = MaterialTheme.colorScheme.error)
         }
-        Download.STATE_COMPLETED -> OutlinedButton(onClick = onDelete) {
-            Icon(Icons.Default.DownloadDone, null); Spacer(Modifier.width(6.dp)); Text("Téléchargé · Supprimer")
+        o.error?.takeIf { o.state == OfflineState.DOWNLOADING }?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         }
-        Download.STATE_FAILED -> OutlinedButton(onClick = onStart) {
-            Icon(Icons.Default.Replay, null); Spacer(Modifier.width(6.dp)); Text("Échec · Réessayer")
-        }
-        else -> OutlinedButton(onClick = onDelete) {
-            Icon(Icons.Default.Delete, null); Spacer(Modifier.width(6.dp)); Text("${DownloadUtil.stateLabel(d)} · Annuler")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            when (o.state) {
+                OfflineState.DOWNLOADING, OfflineState.QUEUED ->
+                    OutlinedButton(onClick = { Offline.pause(o.id) }) { Icon(Icons.Default.Pause, null); Spacer(Modifier.width(6.dp)); Text("Pause") }
+                OfflineState.PAUSED, OfflineState.FAILED ->
+                    OutlinedButton(onClick = { Offline.resume(ctx, o.id) }) { Icon(Icons.Default.Replay, null); Spacer(Modifier.width(6.dp)); Text("Reprendre") }
+                OfflineState.COMPLETED -> Unit
+            }
+            OutlinedButton(onClick = { Offline.delete(o.id) }) {
+                Icon(Icons.Default.Delete, null); Spacer(Modifier.width(6.dp))
+                Text(if (o.state == OfflineState.COMPLETED) "Supprimer" else "Annuler")
+            }
         }
     }
 }
@@ -220,7 +255,7 @@ fun SeriesDetailScreen(seriesId: String, onBack: () -> Unit) {
                     r.isFailure -> Centered("Erreur : ${r.exceptionOrNull()?.message}") {
                         Button(onClick = { result = null; attempt++ }) { Text("Réessayer") }
                     }
-                    else -> EpisodeList(s.name, r.getOrThrow())
+                    else -> EpisodeList(s.id, s.name, s.cover, r.getOrThrow())
                 }
             }
         }
@@ -228,7 +263,7 @@ fun SeriesDetailScreen(seriesId: String, onBack: () -> Unit) {
 }
 
 @Composable
-private fun EpisodeList(seriesName: String, episodes: List<Episode>) {
+private fun EpisodeList(seriesId: String, seriesName: String, seriesCover: String?, episodes: List<Episode>) {
     if (episodes.isEmpty()) { Centered("Aucun épisode"); return }
     val ctx = LocalContext.current
     val seasons = remember(episodes) { episodes.map { it.season }.distinct().sorted() }
@@ -249,12 +284,12 @@ private fun EpisodeList(seriesName: String, episodes: List<Episode>) {
     ) {
         items(list) { e ->
             val key = episodeKey(e.id)
-            val d = rememberDownload(key)
-            val done = d?.state == Download.STATE_COMPLETED
+            val o = rememberOffline(key)
+            val done = o?.state == OfflineState.COMPLETED
             val title = "$seriesName · S${e.season}E${e.number}"
             Row(verticalAlignment = Alignment.CenterVertically) {
                 FocusBox(
-                    onClick = { PlayerActivity.start(ctx, e.url, title, live = false, resumeKey = key, downloadId = if (done) key else null) },
+                    onClick = { PlayerActivity.start(ctx, e.url, title, live = false, resumeKey = key, localFile = if (done) Offline.file(o!!).path else null) },
                     modifier = Modifier.weight(1f),
                 ) {
                     Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -265,17 +300,33 @@ private fun EpisodeList(seriesName: String, episodes: List<Episode>) {
                             val pos = Store.position(key)
                             val status = listOfNotNull(
                                 if (pos > 0) "Reprise à ${formatTime(pos)}" else null,
-                                d?.let { DownloadUtil.stateLabel(it) }?.ifBlank { null },
+                                o?.let { offlineLabel(it) },
                             ).joinToString(" · ")
                             if (status.isNotEmpty()) Text(status, style = MaterialTheme.typography.bodySmall, color = Accent)
                         }
                     }
                 }
-                when (d?.state) {
-                    null, Download.STATE_FAILED, Download.STATE_REMOVING ->
-                        IconButton(onClick = { DownloadUtil.start(ctx, key, e.url, title, e.cover) }) { Icon(Icons.Default.Download, "Télécharger") }
-                    else ->
-                        IconButton(onClick = { DownloadUtil.remove(ctx, key) }) { Icon(Icons.Default.Delete, "Supprimer le téléchargement") }
+                when (o?.state) {
+                    null ->
+                        IconButton(onClick = {
+                            Offline.enqueue(
+                                ctx,
+                                OfflineItem(
+                                    id = key, kind = OfflineKind.EPISODE, title = title, url = e.url,
+                                    poster = seriesCover ?: e.cover, fileName = "$key.${Offline.extensionOf(e.url)}",
+                                    seriesId = "${Repository.playlist?.id}_$seriesId", seriesName = seriesName,
+                                    season = e.season, episode = e.number,
+                                ),
+                            )
+                        }) { Icon(Icons.Default.Download, "Télécharger") }
+                    OfflineState.DOWNLOADING, OfflineState.QUEUED ->
+                        IconButton(onClick = { Offline.pause(key) }) { Icon(Icons.Default.Pause, "Pause") }
+                    OfflineState.PAUSED, OfflineState.FAILED ->
+                        IconButton(onClick = { Offline.resume(ctx, key) }) { Icon(Icons.Default.Replay, "Reprendre") }
+                    OfflineState.COMPLETED -> Unit
+                }
+                if (o != null) {
+                    IconButton(onClick = { Offline.delete(key) }) { Icon(Icons.Default.Delete, "Supprimer") }
                 }
             }
         }
