@@ -7,6 +7,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import com.novaplay.app.download.Offline
+import com.novaplay.app.download.OfflineDownloadService
 import com.novaplay.app.ui.App
 import com.novaplay.app.ui.NovaTheme
 
@@ -23,6 +25,8 @@ class MainActivity : ComponentActivity() {
         ) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
+        // Relance les téléchargements interrompus (app fermée, redémarrage…).
+        if (Offline.hasQueued()) runCatching { OfflineDownloadService.start(this) }
         setContent { NovaTheme { App() } }
     }
 }
